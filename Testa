@@ -1,0 +1,260 @@
+-- Painel toggleable para carregar/executar um script remoto
+-- Coloque este LocalScript em StarterPlayerScripts ou StarterGui.
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- URL do script remoto
+local SCRIPT_URL = "https://raw.githubusercontent.com/eriquedanilo76-lab/Danilo/refs/heads/main/Pacc"
+
+-- Config
+local TOGGLE_KEY = Enum.KeyCode.P         -- tecla para mostrar/ocultar o painel
+local TOAST_TIME = 3                      -- tempo de exibição de mensagens (s)
+
+-- Cria ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PainelLoader"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Fundo semi-transparente (fecha painel ao clicar fora)
+local backdrop = Instance.new("TextButton")
+backdrop.Name = "Backdrop"
+backdrop.Size = UDim2.new(1,0,1,0)
+backdrop.Position = UDim2.new(0,0,0,0)
+backdrop.BackgroundColor3 = Color3.fromRGB(0,0,0)
+backdrop.BackgroundTransparency = 0.6
+backdrop.AutoButtonColor = false
+backdrop.Text = ""
+backdrop.Visible = false
+backdrop.Parent = screenGui
+
+-- Painel principal
+local panel = Instance.new("Frame")
+panel.Name = "Panel"
+panel.Size = UDim2.new(0,0,0,0) -- inicia fechado
+panel.Position = UDim2.new(0.5, -200, 0.5, -150)
+panel.AnchorPoint = Vector2.new(0.5,0.5)
+panel.BackgroundColor3 = Color3.fromRGB(30,30,30)
+panel.BorderSizePixel = 0
+panel.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner", panel)
+uiCorner.CornerRadius = UDim.new(0,12)
+
+-- Cabeçalho
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1,0,0,40)
+header.BackgroundTransparency = 1
+header.Parent = panel
+
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1,-70,1,0)
+title.Position = UDim2.new(0,10,0,0)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 20
+title.TextColor3 = Color3.fromRGB(255,255,255)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = "Painel de Script"
+title.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "Close"
+closeBtn.Size = UDim2.new(0,50,0,26)
+closeBtn.Position = UDim2.new(1,-60,0,7)
+closeBtn.AnchorPoint = Vector2.new(0,0)
+closeBtn.Text = "Fechar"
+closeBtn.Font = Enum.Font.SourceSans
+closeBtn.TextSize = 14
+closeBtn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+closeBtn.Parent = header
+Instance.new("UICorner", closeBtn)
+
+-- Conteúdo
+local content = Instance.new("Frame")
+content.Name = "Content"
+content.Size = UDim2.new(1,0,1,-40)
+content.Position = UDim2.new(0,0,0,40)
+content.BackgroundTransparency = 1
+content.Parent = panel
+
+local execBtn = Instance.new("TextButton")
+execBtn.Name = "Execute"
+execBtn.Size = UDim2.new(1,-20,0,40)
+execBtn.Position = UDim2.new(0,10,0,10)
+execBtn.Text = "Carregar e Executar Script"
+execBtn.Font = Enum.Font.SourceSansSemibold
+execBtn.TextSize = 16
+execBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
+execBtn.TextColor3 = Color3.fromRGB(255,255,255)
+execBtn.Parent = content
+Instance.new("UICorner", execBtn)
+
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Name = "Info"
+infoLabel.Size = UDim2.new(1,-20,0,28)
+infoLabel.Position = UDim2.new(0,10,0,60)
+infoLabel.BackgroundTransparency = 1
+infoLabel.Font = Enum.Font.SourceSans
+infoLabel.TextSize = 14
+infoLabel.TextColor3 = Color3.fromRGB(200,200,200)
+infoLabel.TextWrapped = true
+infoLabel.Text = "Pressione '"..tostring(TOGGLE_KEY.Name).."' ou o botão no canto inferior direito para abrir/fechar."
+infoLabel.Parent = content
+
+-- Botão pequeno para abrir/fechar (sempre visível)
+local tinyToggle = Instance.new("TextButton")
+tinyToggle.Name = "TinyToggle"
+tinyToggle.Size = UDim2.new(0,48,0,48)
+tinyToggle.Position = UDim2.new(1,-58,1,-58)
+tinyToggle.AnchorPoint = Vector2.new(0,0)
+tinyToggle.BackgroundColor3 = Color3.fromRGB(40,40,40)
+tinyToggle.Text = "P"
+tinyToggle.Font = Enum.Font.SourceSansBold
+tinyToggle.TextSize = 22
+tinyToggle.TextColor3 = Color3.fromRGB(255,255,255)
+tinyToggle.Parent = screenGui
+Instance.new("UICorner", tinyToggle)
+
+-- Mensagem rápida (toast)
+local toast = Instance.new("TextLabel")
+toast.Name = "Toast"
+toast.Size = UDim2.new(0,300,0,36)
+toast.Position = UDim2.new(0.5,-150,0.05,0)
+toast.AnchorPoint = Vector2.new(0.5,0)
+toast.BackgroundColor3 = Color3.fromRGB(20,20,20)
+toast.TextColor3 = Color3.fromRGB(255,255,255)
+toast.Font = Enum.Font.SourceSansSemibold
+toast.TextSize = 16
+toast.Text = ""
+toast.Visible = false
+toast.Parent = screenGui
+Instance.new("UICorner", toast)
+
+-- Funções auxiliares
+local panelOpen = false
+local tweenInfo = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function showToast(text)
+    toast.Text = text
+    toast.Visible = true
+    toast.BackgroundTransparency = 0
+    delay(TOAST_TIME, function()
+        toast.Visible = false
+    end)
+end
+
+local function openPanel()
+    if panelOpen then return end
+    panelOpen = true
+    backdrop.Visible = true
+    backdrop.Active = true
+    local targetSize = UDim2.new(0,400,0,220)
+    TweenService:Create(panel, tweenInfo, {Size = targetSize}):Play()
+end
+
+local function closePanel()
+    if not panelOpen then return end
+    panelOpen = false
+    backdrop.Visible = false
+    TweenService:Create(panel, tweenInfo, {Size = UDim2.new(0,0,0,0)}):Play()
+end
+
+local function togglePanel()
+    if panelOpen then closePanel() else openPanel() end
+end
+
+-- Toggle por tecla
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == TOGGLE_KEY then
+        togglePanel()
+    end
+end)
+
+-- Toggle pelo botão pequeno
+tinyToggle.MouseButton1Click:Connect(togglePanel)
+
+-- Fechar ao clicar no backdrop ou no botão Fechar
+backdrop.MouseButton1Click:Connect(closePanel)
+closeBtn.MouseButton1Click:Connect(closePanel)
+
+-- Arrastar painel (drag)
+local dragging = false
+local dragStart
+local startPos
+
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = panel.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        -- necessário para InputChanged padrão
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        local newPos = startPos + UDim2.new(0, delta.X, 0, delta.Y)
+        panel.Position = newPos
+    end
+end)
+
+-- Execução do script remoto (com checagem)
+local executing = false
+execBtn.MouseButton1Click:Connect(function()
+    if executing then return end
+    executing = true
+    execBtn.Text = "Carregando..."
+    -- Baixa e executa com pcall
+    local ok, res = pcall(function()
+        return game:HttpGet(SCRIPT_URL)
+    end)
+
+    if not ok or not res then
+        showToast("Falha ao baixar o script. Verifique HttpEnabled e a URL.")
+        execBtn.Text = "Carregar e Executar Script"
+        executing = false
+        return
+    end
+
+    local fn, err = loadstring(res)
+    if not fn then
+        showToast("Erro ao compilar o script: "..tostring(err))
+        execBtn.Text = "Carregar e Executar Script"
+        executing = false
+        return
+    end
+
+    local suc, runtimeErr = pcall(function() fn() end)
+    if not suc then
+        showToast("Erro ao executar o script: "..tostring(runtimeErr))
+    else
+        showToast("Script executado com sucesso.")
+    end
+
+    execBtn.Text = "Carregar e Executar Script"
+    executing = false
+end)
+
+-- Dica: abrir o painel ao iniciar (opcional)
+-- openPanel()
