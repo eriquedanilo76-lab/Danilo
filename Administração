@@ -1,0 +1,332 @@
+-- TempBanServer.lua
+-- Coloque este script em ServerScriptService
+
+local Players = game:GetService("Players")
+local DataStoreService = game:GetService("DataStoreService")
+
+local BAN_STORE_NAME = "TempBans_v1"
+local banStore = DataStoreService:GetDataStore(BAN_STORE_NAME)
+
+-- Administradores (use UserIds)
+local ADMIN_USERIDS = {
+    [12345678] = true, -- substitua pelos seus ids
+    [87654321] = true,
+}
+
+local COMMAND_PREFIXES = {
+    tempban = "!tempban",
+    unban = "!unban",
+    checkban = "!checkban",
+}
+
+-- util: encontra jogador online por parte do nome (case-insensitive)
+local function findPlayerByName(query)
+    if not query then return nil end
+    query = string.lower(query)
+    for _, pl in pairs(Players:GetPlayers()) do
+        if string.find(string.lower(pl.Name), query) then
+            return pl
+        end
+    end
+    return nil
+end
+
+-- util: converte segundos para formato legível
+local function formatTimeLeft(seconds)
+    if not seconds or seconds <= 0 then return "0s" end
+    local minutes = math.floor(seconds / 60)
+    local secs = seconds % 60
+    if minutes > 0 then
+        return string.format("%dm %ds", minutes, secs)
+    else
+        return string.format("%ds", secs)
+    end
+end
+
+-- grava ban no DataStore
+local function saveBan(userId, banData)
+    local key = tostring(userId)
+    local success, err = pcall(function()
+        banStore:SetAsync(key, banData)
+    end)
+    if not success then
+        warn("Erro ao salvar ban para " .. key .. ": " .. tostring(err))
+        return false, err
+    end
+    return true
+end
+
+-- remove ban do DataStore
+local function removeBan(userId)
+    local key = tostring(userId)
+    local success, err = pcall(function()
+        banStore:RemoveAsync(key)
+    end)
+    if not success then
+        warn("Erro ao remover ban para " .. key .. ": " .. tostring(err))
+        return false, err
+    end
+    return true
+end
+
+-- lê ban do DataStore
+local function loadBan(userId)
+    local key = tostring(userId)
+    local ok, data = pcall(function()
+        return banStore:GetAsync(key)
+    end)
+    if not ok then
+        warn("Erro ao ler ban para " .. key .. ": " .. tostring(data))
+        return nil, data
+    end
+    return data
+end
+
+-- aplica ban (server-side): cria registro e, se o jogador estiver online, o kicka
+-- durationSeconds = tempo em segundos
+local function applyTempBan(adminPlayer, targetUserId, durationSeconds, reason)
+    local expires = os.time() + durationSeconds
+    local banData = {
+        expires = expires,
+        reason = reason or "Sem motivo informado",
+        adminId = adminPlayer and adminPlayer.UserId or 0,
+        createdAt = os.time(),
+    }
+
+    local ok, err = saveBan(targetUserId, banData)
+    if not ok then
+        if adminPlayer then
+            adminPlayer:SendSystemMessage("Erro ao salvar ban: "..tostring(err))
+        end
+        return false, err
+    end
+
+    -- se o jogador estiver online, kicka
+    local targetPlayer = Players:GetPlayerByUserId(targetUserId)
+    if targetPlayer then
+        local timeLeft = formatTimeLeft(durationSeconds)
+        local kickReason = string.format("Você foi temporariamente banido por %s. Motivo: %s", timeLeft, banData.reason)
+        targetPlayer:Kick(kickReason)
+    end
+
+    -- log
+    print(string.format("[TempBan] Admin %s (%d) baniu %d por %d segundos. Motivo: %s",
+        adminPlayer and adminPlayer.Name or "Console",
+        adminPlayer and adminPlayer.UserId or 0,
+        targetUserId,
+        durationSeconds,
+        banData.reason
+    ))
+
+    if adminPlayer then
+        adminPlayer:SendSystemMessage(string.format("Ban aplicado em %d por %s.", targetUserId, formatTimeLeft(durationSeconds)))
+    end
+
+    return true
+end
+
+-- verifica ban ao entrar; se ban ativo, kicka; se expirado, remove do DataStore
+local function checkBanOnJoin(player)
+    local userId = player.UserId
+    local data, err = loadBan(userId)
+    if not data then
+        if err then
+            -- erro ao ler, permitir entrada (evita bloquear por falha do datastore)
+            warn("Falha ao verificar ban para "..tostring(userId)..": "..tostring(err))
+        end
+        return
+    end
+
+    if type(data) ~= "table" or not data.expires then
+        -- formato inesperado -> remove
+        removeBan(userId)
+        return
+    end
+
+    local now = os.time()
+    if data.expires > now then
+        local left = data.expires - now
+        local reason = data.reason or "Ban temporário"
+        local kickReason = string.format("Você está banido por mais %s. Motivo: %s", formatTimeLeft(left), reason)
+        -- Kick immediato
+        player:Kick(kickReason)
+    else
+        -- expirou -> remove ban
+        removeBan(userId)
+    end
+end
+
+-- parse de comandos do chat
+local function onPlayerChatted(player)
+    player.Chatted:Connect(function(msg)
+        if type(msg) ~= "string" then return end
+        local text = msg:match("^%s*(.-)%s*$") or ""
+        -- tempban
+        if text:sub(1, #COMMAND_PREFIXES.tempban):lower() == COMMAND_PREFIXES.tempban then
+            if not ADMIN_USERIDS[player.UserId] then
+                player:SendSystemMessage("Você não tem permissão para usar esse comando.")
+                return
+            end
+
+            -- formato: !tempban <nomeOuUserId> <minutos> [motivo...]
+            local argsStr = text:sub(#COMMAND_PREFIXES.tempban + 2) -- remove prefix e espaço
+            if not argsStr or argsStr == "" then
+                player:SendSystemMessage("Uso: !tempban <nomeOuUserId> <minutos> [motivo]")
+                return
+            end
+
+            local tokens = {}
+            for token in string.gmatch(argsStr, "%S+") do table.insert(tokens, token) end
+            if #tokens < 2 then
+                player:SendSystemMessage("Uso: !tempban <nomeOuUserId> <minutos> [motivo]")
+                return
+            end
+
+            local targetIdentifier = tokens[1]
+            local minutes = tonumber(tokens[2])
+            if not minutes or minutes <= 0 then
+                player:SendSystemMessage("Tempo inválido. Informe minutos (número inteiro).")
+                return
+            end
+            local reason = nil
+            if #tokens > 2 then
+                reason = table.concat(tokens, " ", 3)
+            end
+
+            -- resolver target para UserId: se número, usa direto; senão procura online pelo nome
+            local targetUserId = tonumber(targetIdentifier)
+            local targetPlayer = nil
+            if not targetUserId then
+                targetPlayer = findPlayerByName(targetIdentifier)
+                if targetPlayer then
+                    targetUserId = targetPlayer.UserId
+                end
+            end
+
+            if not targetUserId then
+                player:SendSystemMessage("Jogador/ID não encontrado. Se for offline, passe o UserId numérico.")
+                return
+            end
+
+            -- não permitir banir outro admin
+            if ADMIN_USERIDS[targetUserId] then
+                player:SendSystemMessage("Você não pode banir outro admin.")
+                return
+            end
+
+            local seconds = math.floor(minutes * 60)
+            local ok, err = applyTempBan(player, targetUserId, seconds, reason)
+            if not ok then
+                player:SendSystemMessage("Erro ao aplicar ban: "..tostring(err))
+            end
+            return
+        end
+
+        -- unban
+        if text:sub(1, #COMMAND_PREFIXES.unban):lower() == COMMAND_PREFIXES.unban then
+            if not ADMIN_USERIDS[player.UserId] then
+                player:SendSystemMessage("Você não tem permissão para usar esse comando.")
+                return
+            end
+
+            local argsStr = text:sub(#COMMAND_PREFIXES.unban + 2)
+            if not argsStr or argsStr == "" then
+                player:SendSystemMessage("Uso: !unban <nomeOuUserId>")
+                return
+            end
+
+            local targetIdentifier = argsStr:match("%S+")
+            local targetUserId = tonumber(targetIdentifier)
+            if not targetUserId then
+                local targetPlayer = findPlayerByName(targetIdentifier)
+                if targetPlayer then
+                    targetUserId = targetPlayer.UserId
+                end
+            end
+
+            if not targetUserId then
+                player:SendSystemMessage("Jogador/ID não encontrado. Se for offline, passe o UserId numérico.")
+                return
+            end
+
+            local ok, err = removeBan(targetUserId)
+            if ok then
+                player:SendSystemMessage("Unban aplicado em " .. tostring(targetUserId))
+                print(string.format("[TempBan] Admin %s (%d) removeu ban de %d", player.Name, player.UserId, targetUserId))
+            else
+                player:SendSystemMessage("Erro ao remover ban: "..tostring(err))
+            end
+            return
+        end
+
+        -- checkban
+        if text:sub(1, #COMMAND_PREFIXES.checkban):lower() == COMMAND_PREFIXES.checkban then
+            if not ADMIN_USERIDS[player.UserId] then
+                player:SendSystemMessage("Você não tem permissão para usar esse comando.")
+                return
+            end
+
+            local argsStr = text:sub(#COMMAND_PREFIXES.checkban + 2)
+            if not argsStr or argsStr == "" then
+                player:SendSystemMessage("Uso: !checkban <nomeOuUserId>")
+                return
+            end
+
+            local targetIdentifier = argsStr:match("%S+")
+            local targetUserId = tonumber(targetIdentifier)
+            if not targetUserId then
+                local targetPlayer = findPlayerByName(targetIdentifier)
+                if targetPlayer then
+                    targetUserId = targetPlayer.UserId
+                end
+            end
+
+            if not targetUserId then
+                player:SendSystemMessage("Jogador/ID não encontrado.")
+                return
+            end
+
+            local data, err = loadBan(targetUserId)
+            if not data then
+                if err then
+                    player:SendSystemMessage("Erro ao consultar ban: "..tostring(err))
+                else
+                    player:SendSystemMessage("Sem ban ativo para "..tostring(targetUserId))
+                end
+                return
+            end
+
+            if type(data) ~= "table" or not data.expires then
+                player:SendSystemMessage("Formato de ban inválido — removendo registro.")
+                removeBan(targetUserId)
+                return
+            end
+
+            local now = os.time()
+            if data.expires > now then
+                local left = data.expires - now
+                player:SendSystemMessage(string.format("Ban ativo para %d — sobra %s. Motivo: %s", targetUserId, formatTimeLeft(left), data.reason or "Nenhum"))
+            else
+                player:SendSystemMessage("Ban expirado — removendo registro.")
+                removeBan(targetUserId)
+            end
+            return
+        end
+    end)
+end
+
+-- Conexões
+Players.PlayerAdded:Connect(function(player)
+    -- checar ban ao entrar
+    checkBanOnJoin(player)
+    -- conectar chat
+    onPlayerChatted(player)
+end)
+
+-- inicializa para quem já estiver online no momento do script (útil durante testes)
+for _, pl in pairs(Players:GetPlayers()) do
+    checkBanOnJoin(pl)
+    onPlayerChatted(pl)
+end
+
+print("TempBanServer carregado.")
