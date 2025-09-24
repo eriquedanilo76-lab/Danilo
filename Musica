@@ -1,0 +1,71 @@
+-- Server Script (coloque em ServerScriptService)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+-- RemoteEvent
+local remote = Instance.new("RemoteEvent")
+remote.Name = "RadioControl"
+remote.Parent = ReplicatedStorage
+
+-- IDs padrão
+local ids = {
+    2504463529,
+    4860377309,
+    6117112610,
+    4572496137,
+    5625703667,
+    6043914200,
+    17422156627,
+    133498554139200
+}
+
+-- Cria o som
+local radioFolder = Instance.new("Folder", Workspace)
+radioFolder.Name = "RadioFolder"
+
+local sound = Instance.new("Sound", radioFolder)
+sound.Name = "RadioPlaylist"
+sound.Volume = 1
+sound.Looped = false
+
+local currentIndex = 1
+
+local function playCurrent()
+    if #ids == 0 then return end
+    sound.SoundId = "rbxassetid://".. ids[currentIndex]
+    sound:Play()
+end
+
+sound.Ended:Connect(function()
+    currentIndex += 1
+    if currentIndex > #ids then currentIndex = 1 end
+    playCurrent()
+end)
+
+-- Controle remoto
+remote.OnServerEvent:Connect(function(player, action, value)
+    if action == "play" then
+        if not sound.IsPlaying then
+            playCurrent()
+        end
+    elseif action == "pause" then
+        sound:Pause()
+    elseif action == "next" then
+        sound:Stop()
+        currentIndex += 1
+        if currentIndex > #ids then currentIndex = 1 end
+        playCurrent()
+    elseif action == "volume" then
+        sound.Volume = math.clamp(value, 0, 5)
+    elseif action == "custom" then
+        if tonumber(value) then
+            sound:Stop()
+            sound.SoundId = "rbxassetid://".. tostring(value)
+            sound:Play()
+        end
+    end
+end)
+
+-- inicia
+playCurrent()
