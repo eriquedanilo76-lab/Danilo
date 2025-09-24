@@ -1,0 +1,75 @@
+-- LocalScript (coloque dentro de StarterGui > ScreenGui > LocalScript)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local remote = ReplicatedStorage:WaitForChild("RadioControl")
+local gui = script.Parent
+
+-- Função rápida pra botão
+local function makeButton(name, pos, text)
+    local b = Instance.new("TextButton")
+    b.Name = -- Server Script (coloque -- LocalScript (coloque dentro de StarterGui > ScreenGui > LocalScript)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local remote = ReplicatedStorage:WaitForChild("RadioControl")
+local gui = script.Parent
+
+-- Função rápida pra botão
+local function makeButton(name, pos, text)
+    local b = Instance.new("TextButton")
+    b.Name = name
+    b.Size = UDim2.new(0,100,0,40)
+    b.Position = pos
+    b.Text = text
+    b.Parent = gui
+    b.BackgroundColor3 = Color3.fromRGB(50,50,50)
+    b.TextColor3 = Color3.fromRGB(255,255,255)
+    return b
+end
+
+-- Botões básicos
+local playBtn = makeButton("Play", UDim2.new(0,10,0,10), "▶ Play")
+local pauseBtn = makeButton("Pause", UDim2.new(0,120,0,10), "⏸ Pause")
+local nextBtn = makeButton("Next", UDim2.new(0,230,0,10), "⏭ Next")
+local volUp = makeButton("VolUp", UDim2.new(0,10,0,60), "🔊 +")
+local volDown = makeButton("VolDown", UDim2.new(0,120,0,60), "🔉 -")
+
+-- TextBox para ID customizado
+local input = Instance.new("TextBox")
+input.Name = "CustomIDBox"
+input.Size = UDim2.new(0,200,0,40)
+input.Position = UDim2.new(0,10,0,110)
+input.PlaceholderText = "Digite ID da música"
+input.Text = ""
+input.Parent = gui
+input.BackgroundColor3 = Color3.fromRGB(30,30,30)
+input.TextColor3 = Color3.fromRGB(255,255,255)
+
+-- Botão pra tocar ID custom
+local playCustom = makeButton("PlayCustom", UDim2.new(0,220,0,110), "🎵 Tocar ID")
+
+-- Eventos
+playBtn.MouseButton1Click:Connect(function()
+    remote:FireServer("play")
+end)
+
+pauseBtn.MouseButton1Click:Connect(function()
+    remote:FireServer("pause")
+end)
+
+nextBtn.MouseButton1Click:Connect(function()
+    remote:FireServer("next")
+end)
+
+volUp.MouseButton1Click:Connect(function()
+    remote:FireServer("volume", math.min(5, workspace.RadioFolder.RadioPlaylist.Volume + 0.2))
+end)
+
+volDown.MouseButton1Click:Connect(function()
+    remote:FireServer("volume", math.max(0, workspace.RadioFolder.RadioPlaylist.Volume - 0.2))
+end)
+
+playCustom.MouseButton1Click:Connect(function()
+    if tonumber(input.Text) then
+        remote:FireServer("custom", tonumber(input.Text))
+    end
+end)
